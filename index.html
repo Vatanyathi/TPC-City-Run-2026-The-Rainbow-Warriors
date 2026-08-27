@@ -1211,40 +1211,26 @@ function beep(){
 }
 
 /* ---------------- Download / Save ----------------
-   The <a download> attribute that works on desktop is unreliable on
-   mobile: iOS Safari largely ignores it, and Android can be flaky with
-   large data URLs. The reliable mobile path is the native Web Share
-   API, which opens the OS share sheet with a real "Save Image" /
-   "Save to Photos" action. We try that first, then fall back to a
-   blob download, then finally just open the image so the person can
-   long-press to save it manually. */
-async function saveResultPhoto(){
-  const dataUrl = document.getElementById('resultImg').src;
-  const ts = new Date().toISOString().replace(/[:.]/g,'-');
-  const filename = `${CONFIG.filenamePrefix}-${ts}.png`;
+   navigator.share() only counts as "triggered by a real tap" if it is
+   called synchronously inside the click handler — on iOS Safari,
+   awaiting anything (even a fetch of the data URL) before calling it
+   silently revokes that permission, so share() then fails and falls
+   through to a download link that ALSO doesn't work on iOS. The fix:
+   decode the data URL to a Blob synchronously (no await), so share()
+   fires in the same tick as the tap. */
+function dataUrlToBlobSync(dataUrl){
+  const commaIdx = dataUrl.indexOf(',');
+  const header = dataUrl.slice(0, commaIdx);
+  const base64 = dataUrl.slice(commaIdx + 1);
+  const mimeMatch = header.match(/data:(.*?);base64/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++){ bytes[i] = binary.charCodeAt(i); }
+  return new Blob([bytes], { type: mime });
+}
 
-  let blob;
-  try {
-    const res = await fetch(dataUrl);
-    blob = await res.blob();
-  } catch (e){
-    window.open(dataUrl, '_blank');
-    return;
-  }
-
-  if (navigator.canShare && navigator.share){
-    try {
-      const file = new File([blob], filename, { type: 'image/png' });
-      if (navigator.canShare({ files: [file] })){
-        await navigator.share({ files: [file], title: filename });
-        return;
-      }
-    } catch (shareErr){
-      if (shareErr && shareErr.name === 'AbortError') return; // person cancelled the share sheet
-      // otherwise fall through to the download fallback below
-    }
-  }
-
+function fallbackDownload(blob, filename, dataUrl){
   try {
     const blobUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1257,6 +1243,39 @@ async function saveResultPhoto(){
   } catch (e){
     window.open(dataUrl, '_blank');
   }
+}
+
+function saveResultPhoto(){
+  const dataUrl = document.getElementById('resultImg').src;
+  const ts = new Date().toISOString().replace(/[:.]/g,'-');
+  const filename = `${CONFIG.filenamePrefix}-${ts}.png`;
+
+  let blob;
+  try {
+    blob = dataUrlToBlobSync(dataUrl);
+  } catch (e){
+    window.open(dataUrl, '_blank');
+    return;
+  }
+
+  if (navigator.share && navigator.canShare){
+    try {
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (navigator.canShare({ files: [file] })){
+        /* fire-and-forget: called synchronously, right here, with no
+           await before it, so the tap's activation is still valid */
+        navigator.share({ files: [file], title: filename }).catch(err => {
+          if (err && err.name === 'AbortError') return; // person cancelled the share sheet
+          fallbackDownload(blob, filename, dataUrl);
+        });
+        return;
+      }
+    } catch (e){
+      // fall through to download fallback
+    }
+  }
+
+  fallbackDownload(blob, filename, dataUrl);
 }
 
 document.getElementById('downloadBtn').addEventListener('click', saveResultPhoto);
