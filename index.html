@@ -716,7 +716,7 @@
     </div>
 
     <div class="card" style="margin-top:18px;">
-      <p class="hint" style="margin-top:0;">Tap and hold the photo to save, or use the button below.</p>
+      <p class="hint" style="margin-top:0;">Tap Save to send it to Photos, or tap and hold the image.</p>
       <div class="actions">
         <div class="actions-row">
           <button class="btn btn-ghost" id="retakeBtn">Retake</button>
@@ -724,7 +724,7 @@
         </div>
         <button class="btn btn-primary" id="downloadBtn">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 v12 M7 10 l5 5 5 -5 M4 19 h16"/></svg>
-          Download photo
+          Save photo
         </button>
       </div>
     </div>
@@ -1210,14 +1210,56 @@ function beep(){
   }catch(e){}
 }
 
-/* ---------------- Download ---------------- */
-document.getElementById('downloadBtn').addEventListener('click', ()=>{
-  const link = document.createElement('a');
+/* ---------------- Download / Save ----------------
+   The <a download> attribute that works on desktop is unreliable on
+   mobile: iOS Safari largely ignores it, and Android can be flaky with
+   large data URLs. The reliable mobile path is the native Web Share
+   API, which opens the OS share sheet with a real "Save Image" /
+   "Save to Photos" action. We try that first, then fall back to a
+   blob download, then finally just open the image so the person can
+   long-press to save it manually. */
+async function saveResultPhoto(){
+  const dataUrl = document.getElementById('resultImg').src;
   const ts = new Date().toISOString().replace(/[:.]/g,'-');
-  link.download = `${CONFIG.filenamePrefix}-${ts}.png`;
-  link.href = document.getElementById('resultImg').src;
-  link.click();
-});
+  const filename = `${CONFIG.filenamePrefix}-${ts}.png`;
+
+  let blob;
+  try {
+    const res = await fetch(dataUrl);
+    blob = await res.blob();
+  } catch (e){
+    window.open(dataUrl, '_blank');
+    return;
+  }
+
+  if (navigator.canShare && navigator.share){
+    try {
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: filename });
+        return;
+      }
+    } catch (shareErr){
+      if (shareErr && shareErr.name === 'AbortError') return; // person cancelled the share sheet
+      // otherwise fall through to the download fallback below
+    }
+  }
+
+  try {
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
+  } catch (e){
+    window.open(dataUrl, '_blank');
+  }
+}
+
+document.getElementById('downloadBtn').addEventListener('click', saveResultPhoto);
 </script>
 </body>
 </html>
