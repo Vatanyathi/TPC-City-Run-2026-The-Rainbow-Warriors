@@ -1217,7 +1217,21 @@ function beep(){
    silently revokes that permission, so share() then fails and falls
    through to a download link that ALSO doesn't work on iOS. The fix:
    decode the data URL to a Blob synchronously (no await), so share()
-   fires in the same tick as the tap. */
+   fires in the same tick as the tap.
+
+   Share is iOS-only on purpose: iOS has no working direct-download
+   path, so the share sheet (with its "Save Image" action) is the only
+   way in. Android's <a download> saves straight to the device with no
+   picker at all — using share there instead just opens the generic
+   Android share sheet, which lists every app that accepts images,
+   including work-profile apps like Teams/OneDrive/Company Portal on
+   managed phones. So Android (and everything else) goes straight to
+   the direct download. */
+function isIOSDevice(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 function dataUrlToBlobSync(dataUrl){
   const commaIdx = dataUrl.indexOf(',');
   const header = dataUrl.slice(0, commaIdx);
@@ -1258,7 +1272,7 @@ function saveResultPhoto(){
     return;
   }
 
-  if (navigator.share && navigator.canShare){
+  if (isIOSDevice() && navigator.share && navigator.canShare){
     try {
       const file = new File([blob], filename, { type: 'image/png' });
       if (navigator.canShare({ files: [file] })){
